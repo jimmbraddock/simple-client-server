@@ -1,125 +1,103 @@
 package test.client;
 
-import java.io.BufferedReader;
-import java.io.DataInputStream;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.PrintWriter;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import test.server.Command;
+
+import java.io.*;
 import java.net.Socket;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Scanner;
 
-import test.server.Command;
-
 public class Client {
+    private final Logger logger = LoggerFactory.getLogger(Client.class);
+    private final int PORT = 1978;
+    private final String HOST = "localhost";
+    private Socket s;
+    private BufferedReader in;
+    private DataInputStream dis;
+    private PrintWriter out;
 
-  private Socket s;
+    public Client() {
 
-  public Client(String host, int port, String file) {
+        try {
+            s = new Socket(HOST, PORT);
+            Scanner consoleIn = new Scanner(System.in);
+            in = new BufferedReader(new InputStreamReader(s.getInputStream()));
+            dis = new DataInputStream(s.getInputStream());
+            out = new PrintWriter(s.getOutputStream(), true);
+            System.out.println(
+                    "Hello friend, available commands: 1 - ls (show files in directory), " +
+                            "2 - get <FileName> <SavePath> (download file), 3 - close (close connection)");
+            boolean done = false;
+            do {
+                System.out.print("Command: ");
+                String command = consoleIn.nextLine();
+                if (isValidCommand(command)) {
+                    out.println(command);
+                    out.flush();
+                    done = commandHandler(command);
+                } else {
+                    System.out.println("Unknown command");
+                }
+            } while (!done);
 
-    try {
-      s = new Socket(host, port);
-      Scanner consoleIn = new Scanner(System.in);
-      BufferedReader in = new BufferedReader(new InputStreamReader(s.getInputStream()));
-      DataInputStream dis = new DataInputStream(s.getInputStream());
-      PrintWriter socketOut = new PrintWriter(s.getOutputStream(), true);
-      System.out.println(
-          "Hello friend, available commands: 1 - ls (show files in directory), 2- get <FileName>");
-      boolean done = false;
-      do {
-        // Ask for a message; we're done if none is given
-        System.out.print("Command: ");
-        String message = consoleIn.nextLine();
+            System.out.println("Closing connection");
+            s.close();
 
-        if (isValidCommand(message)) {
-          socketOut.println(message);
-          if (message.equalsIgnoreCase(Command.LS.toString())) {
-            String responce = "";
-            while ((responce = in.readLine()) != null) {
-              if (responce.length() == 0) {
-                break; // blank line terminates input
-              }
-              System.out.println("responce: " + responce);
-            }
-          } else if (message.equalsIgnoreCase(Command.CLOSE.toString())) {
-            socketOut.println(message);
-            socketOut.flush();
-            if (message.equalsIgnoreCase("CLOSE")) {
-              done = true;
-              System.out.println("Ending conversation");
-            }
-          }
-          if (message.toUpperCase().startsWith(Command.GET.toString())) {
-            List<String> getCommand = Arrays.asList(message.split(" "));
-            receiveFile(dis, getCommand.get(2));
-          }
-        } else {
-          System.out.println("Unknown command");
+        } catch (IOException ex) {
+            logger.error("Client error: " + ex.getMessage());
         }
 
-
-//        if (!done) {
-//          // THere was a message; send it to the server
-//          socketOut.println(message);
-//          socketOut.flush();
-//          if (message.equalsIgnoreCase("CLOSE")) {
-//            done = true;
-//            System.out.println("Ending conversation");
-//          }
-//        }
-//        if (message.startsWith("GET")) {
-//          receiveFile(dis);
-//        } else {
-//          String responce = "";
-//          while ((responce = in.readLine()) != null) {
-//            if (responce.length() == 0) {
-//              break; // blank line terminates input
-//            }
-//            System.out.println("responce: " + responce);
-//          }
-//        }
-      } while (!done);
-
-      System.out.println("Closing connection");
-      s.close();
-
-    } catch (IOException ex) {
-      System.err.println(ex);
-      ex.printStackTrace();
     }
 
-  }
-  public static void main(String[] args) {
-
-    Client fc = new Client("localhost", 1978, "C:\\test.txt");
-  }
-
-  private boolean isValidCommand(String command) {
-
-    return command.toLowerCase().matches("^ls|close|get .+\\.\\w+ .+$");
-  }
-  public void receiveFile(InputStream dis, String savePath) throws IOException {
-
-    FileOutputStream fos = new FileOutputStream(savePath);
-    byte[] buffer = new byte[4096];
-
-    int filesize = 4096; // Send file size in separate msg
-    int read = 0;
-    int totalRead = 0;
-    int remaining = filesize;
-    while ((read = dis.read(buffer, 0, Math.min(buffer.length, remaining))) > 0) {
-      totalRead += read;
-      remaining -= read;
-      System.out.println("read " + totalRead + " bytes.");
-      fos.write(buffer, 0, read);
+    private boolean commandHandler(String command) throws IOException {
+        if (command.equalsIgnoreCase(Command.LS.toString())) {
+            String responce = "";
+            while ((responce = in.readLine()) != null) {
+                if (responce.length() == 0) {
+                    break;
+                }
+                System.out.println(responce);
+            }
+        } else if (command.equalsIgnoreCase(Command.CLOSE.toString())) {
+            out.println(command);
+            out.flush();
+            if (command.equalsIgnoreCase("CLOSE")) {
+                System.out.println("Ending conversation");
+                return true;
+            }
+        }
+        if (command.toUpperCase().startsWith(Command.GET.toString())) {
+            List<String> getCommand = Arrays.asList(command.split(" "));
+            String downloadFile = getCommand.get(2);
+            receiveFile(downloadFile);
+        }
+        return false;
     }
 
-    fos.close();
+    private boolean isValidCommand(String command) {
+        return command.toLowerCase().matches("^ls|close|get .+\\.\\w+ .+$");
+    }
 
-    //dis.close();
-  }
+    public void receiveFile(String savePath) throws IOException {
+        FileOutputStream fos = new FileOutputStream(savePath);
+        byte[] buffer = new byte[1024];
+        int fileSize = 1024;
+        int read = 0;
+        int totalRead = 0;
+        int remaining = fileSize;
+        while ((read = dis.read(buffer, 0, Math.min(buffer.length, remaining))) > 0) {
+            totalRead += read;
+            remaining -= read;
+            fos.write(buffer, 0, read);
+        }
+        fos.close();
+    }
+
+    public static void main(String[] args) {
+        Client fc = new Client();
+    }
 
 }
